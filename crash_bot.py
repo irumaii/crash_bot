@@ -1,49 +1,100 @@
+
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 
-st.set_page_config(page_title="Crash Game Bot", layout="centered")
+st.set_page_config(page_title="Crash Predictor", layout="centered")
 
-st.title("🚀 Crash Game Predictor Bot")
+# ---------------------- العنوان ----------------------
+st.title("🎯 بوت توقع نتائج لعبة Crash")
+st.markdown("أدخل النتائج السابقة يدويًا أو من ملف CSV، وستحصل على التوقع القادم مع تحليل مبسط.")
 
-st.write("""
-قم بتحميل ملف CSV يحتوي على نتائج اللعبة أو أدخل النتائج يدويًا لتحليلها.
-""")
+# ---------------------- تحميل ملف CSV ----------------------
+st.subheader("📂 تحميل ملف CSV")
+uploaded_file = st.file_uploader("ارفع ملف النتائج هنا", type="csv")
 
-# تحميل ملف CSV
-uploaded_file = st.file_uploader("📁 حمّل ملف CSV", type=["csv"])
+all_data = []
 
-# قراءة البيانات
-df = None
 if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    if df.shape[1] == 1:
+        all_data = df.iloc[:, 0].tolist()
+        st.success("✅ تم تحميل البيانات من CSV.")
+    else:
+        st.error("❌ الملف يجب أن يحتوي على عمود واحد فقط.")
+
+# ---------------------- إدخال يدوي جماعي ----------------------
+st.subheader("✍️ إدخال النتائج يدويًا (افصل القيم بفاصلة أو سطر جديد)")
+manual_input = st.text_area("مثال: 1.23, 2.45, 3.67")
+
+if manual_input:
     try:
-        df = pd.read_csv(uploaded_file)
-        st.success("✅ تم تحميل البيانات بنجاح!")
-    except Exception as e:
-        st.error(f"❌ حدث خطأ أثناء قراءة الملف: {e}")
+        entries = [float(x.strip()) for x in manual_input.replace('\n', ',').split(',') if x.strip()]
+        all_data.extend(entries)
+        st.success(f"✅ تمت إضافة {len(entries)} نتيجة.")
+    except:
+        st.error("❌ الرجاء إدخال أرقام فقط مفصولة بفواصل أو أسطر.")
 
-# إدخال يدوي
-if df is None:
-    st.write("أو أدخل البيانات يدويًا:")
-    manual_data = st.text_area("📋 أدخل القيم مفصولة بفواصل (مثال: 1.5, 2.1, 3.0):")
-    if manual_data:
-        try:
-            values = [float(x.strip()) for x in manual_data.split(",")]
-            df = pd.DataFrame(values, columns=["Crash Multipliers"])
-            st.success("✅ تم إنشاء البيانات من الإدخال اليدوي!")
-        except:
-            st.error("❌ تأكد من أن البيانات مدخلة بشكل صحيح.")
+# ---------------------- إدخال نتيجة جديدة مباشرة ----------------------
+st.subheader("➕ أضف نتيجة جديدة مباشرة")
+new_result = st.text_input("أدخل النتيجة الأخيرة (مثال: 2.45):")
 
-# تحليل البيانات
-if df is not None:
+if st.button("أضف النتيجة"):
+    try:
+        value = float(new_result)
+        all_data.append(value)
+        st.success(f"✅ تمت إضافة {value} بنجاح.")
+    except:
+        st.error("❌ الرجاء إدخال رقم صالح.")
+
+# ---------------------- تحليل إحصائي ----------------------
+if len(all_data) > 0:
+    st.markdown("---")
     st.subheader("📊 تحليل النتائج")
-    st.write(df.describe())
 
-    st.subheader("📈 رسم بياني للقيم")
+    max_val = max(all_data)
+    min_val = min(all_data)
+    avg_val = np.mean(all_data)
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("🔼 أعلى نتيجة", f"{max_val:.2f}")
+    col2.metric("🔽 أقل نتيجة", f"{min_val:.2f}")
+    col3.metric("📉 المتوسط", f"{avg_val:.2f}")
+
+# ---------------------- التوقع القادم ----------------------
+    st.markdown("---")
+    st.subheader("🔮 التوقع القادم")
+
+    def predict_next(data):
+        # نموذج بسيط: المتوسط مع بعض الوزن للنتائج الأخيرة
+        recent = data[-10:] if len(data) >= 10 else data
+        return round(np.mean(recent) * 0.95, 2)
+
+    prediction = predict_next(all_data)
+
+    # تحديد درجة الأمان
+    if prediction >= 3.0:
+        color = "🟢"
+        risk = "فرصة آمنة"
+    elif prediction >= 2.0:
+        color = "🟡"
+        risk = "فرصة متوسطة"
+    else:
+        color = "🔴"
+        risk = "خطر عالي"
+
+    st.markdown(f"### {color} التوقع: **{prediction}x** — {risk}")
+
+# ---------------------- رسم بياني ----------------------
+    st.markdown("---")
+    st.subheader("📈 عرض النتائج")
+
     fig, ax = plt.subplots()
-    df.plot(kind="line", ax=ax)
+    ax.plot(all_data[-50:], marker='o', linestyle='-', label="النتائج")
+    ax.axhline(prediction, color='orange', linestyle='--', label="التوقع التالي")
+    ax.set_title("آخر 50 نتيجة")
+    ax.legend()
     st.pyplot(fig)
-
-    st.subheader("✅ اقتراح آمن")
-    avg = df.mean().values[0]
-    st.info(f"🔎 المتوسط الحسابي للجولات: **{avg:.2f}** - يمكنك استخدامه كمرجع لقرارك.")
+else:
+    st.info("👈 الرجاء إدخال بعض النتائج أولاً.")
