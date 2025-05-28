@@ -1,100 +1,79 @@
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
+import requests
+import time
+from colorama import Fore, Style
 
-st.set_page_config(page_title="Crash Predictor", layout="centered")
+# ========== إعدادات الاتصال بـ Stake ==========
+HEADERS = {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'origin': 'https://stake.com/',
+    'user-agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'cookie': '__cf_bm=YOUR_COOKIE; cf_clearance=YOUR_CLEARANCE',
+    'x-access-token': 'YOUR_API_KEY'
+}
 
-# ---------------------- العنوان ----------------------
-st.title("🎯 بوت توقع نتائج لعبة Crash")
-st.markdown("أدخل النتائج السابقة يدويًا أو من ملف CSV، وستحصل على التوقع القادم مع تحليل مبسط.")
+GRAPHQL_URL = 'https://stake.com/_api/graphql'
 
-# ---------------------- تحميل ملف CSV ----------------------
-st.subheader("📂 تحميل ملف CSV")
-uploaded_file = st.file_uploader("ارفع ملف النتائج هنا", type="csv")
+QUERY = """
+  query CrashGameListHistory($limit: Int, $offset: Int) {
+    crashGameList(limit: $limit, offset: $offset) {
+      id
+      startTime
+      crashpoint
+    }
+  }
+"""
 
-all_data = []
+def fetch_crash_data(limit=50, offset=0):
+    variables = {"limit": limit, "offset": offset}
+    payload = {
+        "query": QUERY,
+        "variables": variables,
+        "operationName": "CrashGameListHistory"
+    }
 
-if uploaded_file is not None:
-    df = pd.read_csv(uploaded_file)
-    if df.shape[1] == 1:
-        all_data = df.iloc[:, 0].tolist()
-        st.success("✅ تم تحميل البيانات من CSV.")
+    response = requests.post(GRAPHQL_URL, headers=HEADERS, json=payload)
+    data = response.json()
+    
+    if "data" in data and "crashGameList" in data["data"]:
+        return [float(game['crashpoint']) for game in data["data"]["crashGameList"]]
     else:
-        st.error("❌ الملف يجب أن يحتوي على عمود واحد فقط.")
+        print("فشل في جلب البيانات:", data)
+        return []
 
-# ---------------------- إدخال يدوي جماعي ----------------------
-st.subheader("✍️ إدخال النتائج يدويًا (افصل القيم بفاصلة أو سطر جديد)")
-manual_input = st.text_area("مثال: 1.23, 2.45, 3.67")
+# ========== منطق التحليل والتوقع ==========
+def analyze_and_predict(crash_data):
+    low_threshold = 2.0
+    safe_prediction_threshold = 3.0
+    safe_streak = 0
 
-if manual_input:
-    try:
-        entries = [float(x.strip()) for x in manual_input.replace('\n', ',').split(',') if x.strip()]
-        all_data.extend(entries)
-        st.success(f"✅ تمت إضافة {len(entries)} نتيجة.")
-    except:
-        st.error("❌ الرجاء إدخال أرقام فقط مفصولة بفواصل أو أسطر.")
+    print(f"\nآخر {len(crash_data)} نتائج (الأحدث أولاً):")
+    print(", ".join([f"{x:.2f}" for x in crash_data]))
 
-# ---------------------- إدخال نتيجة جديدة مباشرة ----------------------
-st.subheader("➕ أضف نتيجة جديدة مباشرة")
-new_result = st.text_input("أدخل النتيجة الأخيرة (مثال: 2.45):")
+    for result in crash_data:
+        if result < low_threshold:
+            safe_streak += 1
+        else:
+            safe_streak = 0
 
-if st.button("أضف النتيجة"):
-    try:
-        value = float(new_result)
-        all_data.append(value)
-        st.success(f"✅ تمت إضافة {value} بنجاح.")
-    except:
-        st.error("❌ الرجاء إدخال رقم صالح.")
-
-# ---------------------- تحليل إحصائي ----------------------
-if len(all_data) > 0:
-    st.markdown("---")
-    st.subheader("📊 تحليل النتائج")
-
-    max_val = max(all_data)
-    min_val = min(all_data)
-    avg_val = np.mean(all_data)
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("🔼 أعلى نتيجة", f"{max_val:.2f}")
-    col2.metric("🔽 أقل نتيجة", f"{min_val:.2f}")
-    col3.metric("📉 المتوسط", f"{avg_val:.2f}")
-
-# ---------------------- التوقع القادم ----------------------
-    st.markdown("---")
-    st.subheader("🔮 التوقع القادم")
-
-    def predict_next(data):
-        # نموذج بسيط: المتوسط مع بعض الوزن للنتائج الأخيرة
-        recent = data[-10:] if len(data) >= 10 else data
-        return round(np.mean(recent) * 0.95, 2)
-
-    prediction = predict_next(all_data)
-
-    # تحديد درجة الأمان
-    if prediction >= 3.0:
-        color = "🟢"
-        risk = "فرصة آمنة"
-    elif prediction >= 2.0:
-        color = "🟡"
-        risk = "فرصة متوسطة"
+    # عرض التوقع بناءً على التحليل
+    print("\nتحليل النتائج:")
+    if safe_streak >= 3:
+        print(Fore.GREEN + f"🚨 يوجد احتمال كبير لتوقع آمن في الجولة القادمة! عدد النتائج الخطيرة المتتالية: {safe_streak}" + Style.RESET_ALL)
+        print(f"🎯 التوقع: على الأرجح ستكون النتيجة القادمة فوق {safe_prediction_threshold}x")
     else:
-        color = "🔴"
-        risk = "خطر عالي"
+        print(Fore.YELLOW + f"⚠️ لا يوجد نمط واضح حالياً. النتائج الخطيرة المتتالية: {safe_streak}" + Style.RESET_ALL)
+        print("🔄 التوصية: الانتظار حتى يتكرر نمط آمن أكثر.")
 
-    st.markdown(f"### {color} التوقع: **{prediction}x** — {risk}")
+# ========== التنفيذ التلقائي ==========
+if __name__ == "__main__":
+    while True:
+        print("\nجاري جلب النتائج من Stake ...")
+        crash_data = fetch_crash_data(limit=30)
+        if crash_data:
+            analyze_and_predict(crash_data)
+        else:
+            print("⚠️ لم يتم العثور على نتائج، تحقق من صحة الاتصال.")
 
-# ---------------------- رسم بياني ----------------------
-    st.markdown("---")
-    st.subheader("📈 عرض النتائج")
-
-    fig, ax = plt.subplots()
-    ax.plot(all_data[-50:], marker='o', linestyle='-', label="النتائج")
-    ax.axhline(prediction, color='orange', linestyle='--', label="التوقع التالي")
-    ax.set_title("آخر 50 نتيجة")
-    ax.legend()
-    st.pyplot(fig)
-else:
-    st.info("👈 الرجاء إدخال بعض النتائج أولاً.")
+        time.sleep(60)  # انتظر دقيقة قبل التحديث التالي
