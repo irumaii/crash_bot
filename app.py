@@ -1,4 +1,5 @@
 
+
 import streamlit as st
 import requests
 
@@ -91,4 +92,4 @@ if st.button("🚀 تحليل آخر 20,000 نتيجة"):
 
             st.subheader("🔹 الشرط 3 (6 مرات < 0.50):")
             st.write(f"- بدون ظهور 1.05: **{results['c3_no_105']}** مرة")
-            st.write(f"- مع ظهور 1.05: **{results['c3_yes_105']}** مرة")
+            
