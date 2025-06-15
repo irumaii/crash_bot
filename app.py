@@ -1,137 +1,132 @@
 import streamlit as st
 import requests
+import pandas as pd
+import time
 
-# ---------------------------
-# استدعاء بيانات Crash بشكل متدرج (آمن)
-# ---------------------------
-def fetch_crash_data(limit=50000):
+st.set_page_config(page_title="تحليل نتائج Crash", layout="centered")
+st.markdown("## 📊 تحليل نتائج Crash - Stake")
+st.markdown("### 📩 جاري تحميل آخر 50,000 نتيجة...")
+
+@st.cache_data(show_spinner=False)
+def fetch_crash_data(max_rounds=50000, batch_size=100):
     url = "https://api.stake.com/graphql"
-    headers = {"Content-Type": "application/json"}
-    query = """
-    query crashHistory($first: Int, $after: String) {
-      crashHistory(first: $first, after: $after) {
-        edges {
-          cursor
-          node {
-            multiplier
-          }
-        }
-        pageInfo {
-          hasNextPage
-          endCursor
-        }
+    headers = {
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "https://stake.com/"
+    }
+
+    query_str = """
+    query CrashRounds($first: Int, $orderBy: String, $orderDirection: String) {
+      crashRounds(first: $first, orderBy: $orderBy, orderDirection: $orderDirection) {
+        id
+        multiplier
       }
     }
     """
 
-    results = []
-    cursor = None
-
-    while len(results) < limit:
-        variables = {"first": min(500, limit - len(results))}
-        if cursor:
-            variables["after"] = cursor
-
-        try:
-            response = requests.post(url, json={"query": query, "variables": variables}, headers=headers)
-            data = response.json()
-            edges = data["data"]["crashHistory"]["edges"]
-            page_info = data["data"]["crashHistory"]["pageInfo"]
-        except Exception as e:
-            st.error(f"فشل في جلب البيانات: {e}")
-            break
-
-        for edge in edges:
-            results.append(float(edge["node"]["multiplier"]))
-        if not page_info["hasNextPage"]:
-            break
-        cursor = page_info["endCursor"]
-
-    return results
-
-# ---------------------------
-# تحليل الأنماط المطلوبة
-# ---------------------------
-def analyze_patterns(results):
-    stats = {
-        "1.00 x2": 0,
-        "<1.05 x2": 0,
-        "<1.05 x3": 0,
-        "<1.20 x3": 0,
-        "<1.20 x4": 0,
-        "<2.00 x11": 0
+    all_data = []
+    variables = {
+        "first": batch_size,
+        "orderBy": "id",
+        "orderDirection": "desc"
     }
 
-    green_alerts = []
-    red_alerts = []
-    blue_alerts = []
-
-    for i in range(len(results)):
-        conds = {
-            "1.00 x2": i+1 < len(results) and results[i]==1.00 and results[i+1]==1.00,
-            "<1.05 x2": i+1 < len(results) and results[i]<1.05 and results[i+1]<1.05,
-            "<1.05 x3": i+2 < len(results) and all(r<1.05 for r in results[i:i+3]),
-            "<1.20 x3": i+2 < len(results) and all(r<1.20 for r in results[i:i+3]),
-            "<1.20 x4": i+3 < len(results) and all(r<1.20 for r in results[i:i+4]),
-            "<2.00 x11": i+10 < len(results) and all(r<2.00 for r in results[i:i+11]),
+    while len(all_data) < max_rounds:
+        payload = {
+            "operationName": "CrashRounds",
+            "variables": variables,
+            "query": query_str
         }
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            if response.status_code != 200:
+                break
+            json_data = response.json()
+            rounds = json_data.get("data", {}).get("crashRounds", [])
+            if not rounds:
+                break
+            all_data.extend(rounds)
+            variables["cursor"] = rounds[-1]["id"]
+        except Exception:
+            break
+        time.sleep(0.3)
+    return pd.DataFrame(all_data)
 
-        # إجمالي تحقق الشروط (أبيض)
-        for key, condition in conds.items():
-            if condition:
-                stats[key] += 1
+def check_conditions(data):
+    values = data["multiplier"].tolist()
+    results = {
+        "1.00 مرتين": [],
+        "<1.05 مرتين": [],
+        "<1.05 ثلاث مرات": [],
+        "<1.20 ثلاث مرات": [],
+        "<1.20 أربع مرات": [],
+        "<2.00 أحد عشر مرة": [],
+        "نقطة تحقق زرقاء": []
+    }
 
-        # تحقق شرط + ظهور 1.05 بعده (أخضر) أو لا (أحمر)
-        for key, condition in conds.items():
-            if condition and i+1 < len(results):
-                next_result = results[i + int(key.split('x')[-1])]
-                if next_result >= 1.05:
-                    green_alerts.append((i, key))
+    for i in range(len(values) - 11):
+        segment = values[i:i+12]
+
+        if segment[0] == 1.00 and segment[1] == 1.00:
+            results["1.00 مرتين"].append(i)
+
+        if segment[0] < 1.05 and segment[1] < 1.05:
+            results["<1.05 مرتين"].append(i)
+
+        if segment[0] < 1.05 and segment[1] < 1.05 and segment[2] < 1.05:
+            results["<1.05 ثلاث مرات"].append(i)
+
+        if segment[0] < 1.20 and segment[1] < 1.20 and segment[2] < 1.20:
+            results["<1.20 ثلاث مرات"].append(i)
+
+        if segment[0] < 1.20 and segment[1] < 1.20 and segment[2] < 1.20 and segment[3] < 1.20:
+            results["<1.20 أربع مرات"].append(i)
+
+        if all(x < 2.00 for x in segment[:11]):
+            results["<2.00 أحد عشر مرة"].append(i)
+
+        # التحقق من نقطة زرقاء (تحقق شرط ثم ظهور 1.05 خلال 140 بدون خسارة <1.05)
+        for key in list(results.keys())[:-1]:
+            for idx in results[key]:
+                future = values[idx+len(key.split())+1: idx+140]
+                if 1.05 in future and all(x >= 1.05 for x in future):
+                    results["نقطة تحقق زرقاء"].append((key, idx))
+    return results
+
+def display_results(results, values):
+    st.markdown("---")
+    st.markdown("### ✅ النتائج:")
+
+    for key, indices in results.items():
+        if key == "نقطة تحقق زرقاء":
+            for condition, idx in indices:
+                st.markdown(f"<span style='color:blue'>🔵 تحقق الشرط [{condition}] ثم ظهرت 1.05 بعده خلال 140 لعبة دون أي خسارة</span>", unsafe_allow_html=True)
+        else:
+            for idx in indices:
+                segment = values[idx:idx+12]
+                if any(x == 1.05 for x in segment):
+                    color = "green"
+                    result = "✅ مع ظهور 1.05"
                 else:
-                    red_alerts.append((i, key))
+                    color = "red"
+                    result = "❌ بدون ظهور 1.05"
+                st.markdown(f"<span style='color:{color}'>🔹 {key}: {result} (من الجولة {idx})</span>", unsafe_allow_html=True)
 
-        # تحقق شرط أو أكثر + 1.05 بعده + لا خسارة أقل من 1.05 خلال 140 (أزرق)
-        matched_keys = [k for k, v in conds.items() if v]
-        if matched_keys and i+1 < len(results):
-            next_result = results[i + 1]
-            if next_result >= 1.05:
-                future = results[i+2:i+142]  # 140 محاولة
-                if len(future) == 140 and all(r >= 1.05 for r in future):
-                    blue_alerts.append((i, matched_keys))
+    # الإحصائيات العامة بالأبيض
+    st.markdown("### ⚪️ الإحصائيات العامة:")
+    for key in results:
+        if key != "نقطة تحقق زرقاء":
+            st.markdown(f"<span style='color:white'>• {key}: {len(results[key])} مرة</span>", unsafe_allow_html=True)
 
-    return stats, green_alerts, red_alerts, blue_alerts
-
-# ---------------------------
-# واجهة Streamlit
-# ---------------------------
-st.set_page_config(page_title="تحليل Crash", layout="wide")
-st.title("📊 تحليل نتائج Crash - Stake")
-
-with st.spinner("📥 جاري تحميل آخر 50,000 نتيجة..."):
-    data = fetch_crash_data()
-    if len(data) < 100:
-        st.error("❌ فشل في جلب كمية كافية من البيانات.")
-        st.stop()
-
-st.success("✅ تم التحميل بنجاح!")
-
-# تحليل النتائج
-stats, green, red, blue = analyze_patterns(data)
-
-# عرض الإحصائيات
-st.header("⚪ إجمالي تحقق كل شرط")
-for k, v in stats.items():
-    st.markdown(f"<span style='color:white;font-weight:bold'>{k}: {v}</span>", unsafe_allow_html=True)
-
-st.header("🟩 تحقق + ظهور 1.05 بعده")
-for i, k in green:
-    st.markdown(f"<span style='color:green'>Index {i} - {k}</span>", unsafe_allow_html=True)
-
-st.header("🟥 تحقق + لم يظهر 1.05 بعده")
-for i, k in red:
-    st.markdown(f"<span style='color:red'>Index {i} - {k}</span>", unsafe_allow_html=True)
-
-st.header("🔵 تحقق شرط/شروط + ظهر 1.05 + لا خسارة <1.05 خلال 140 لعبة")
-for i, keys in blue:
-    joined = ", ".join(keys)
-    st.markdown(f"<span style='color:blue'>Index {i} - شروط: {joined}</span>", unsafe_allow_html=True)
+try:
+    df = fetch_crash_data()
+    if df.empty:
+        st.error("❌ فشل في تحميل البيانات.")
+    else:
+        df["multiplier"] = df["multiplier"].astype(float)
+        st.success(f"✅ تم تحميل {len(df)} نتيجة.")
+        results = check_conditions(df)
+        display_results(results, df["multiplier"].tolist())
+except Exception as e:
+    st.error(f"❌ حدث خطأ: {str(e)}")
