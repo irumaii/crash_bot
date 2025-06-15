@@ -3,7 +3,6 @@ import requests
 import pandas as pd
 import time
 
-st.markdown("### 👋 هذا الإصدار الجديد من البوت ✅")
 st.set_page_config(page_title="تحليل نتائج Crash", layout="centered")
 st.markdown("## 📊 تحليل نتائج Crash - Stake")
 st.markdown("### 📩 جاري تحميل آخر 50,000 نتيجة...")
